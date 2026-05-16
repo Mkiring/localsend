@@ -49,6 +49,8 @@ jobs:
 
       - name: Build Windows ARM64
         working-directory: app
+        env:
+          FLUTTER_TARGET_PLATFORM: windows-arm64
         run: flutter build windows
 
       - name: Create empty settings.json
