@@ -37,6 +37,7 @@ jobs:
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: "stable"
+          architecture: x64
 
       - name: Dependencies (app)
         working-directory: app
