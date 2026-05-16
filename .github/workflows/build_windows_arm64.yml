@@ -1,0 +1,93 @@
+name: Build Windows ARM64
+
+on:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.38.10"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Get version from pubspec.yaml
+        id: get_version
+        run: |
+          VERSION=$(sed -n 's/^version: \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' app/pubspec.yaml)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  build_windows_zip_arm64:
+    needs: build
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Fix long file paths
+        run: git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: "stable"
+
+      - name: Dependencies (app)
+        working-directory: app
+        run: flutter pub get
+
+      - name: Dependencies (cargokit)
+        working-directory: app/rust_builder/cargokit/build_tool
+        run: flutter pub get
+
+      - name: Build Windows ARM64
+        working-directory: app
+        run: flutter build windows
+
+      - name: Create empty settings.json
+        working-directory: app
+        run: echo '{}' | Out-File -Encoding utf8 build/windows/arm64/runner/Release/settings.json
+
+      - name: Copy VC runtime DLLs
+        working-directory: app
+        run: |
+          $redistBase = "C:\Program Files (x86)\Microsoft Visual Studio"
+          $dllDir = Get-ChildItem -Path $redistBase -Recurse -Filter "arm64" -Directory |
+            Where-Object { $_.FullName -match "Redist\\MSVC" } |
+            Select-Object -First 1
+
+          if ($dllDir) {
+            $arm64Path = $dllDir.FullName
+            Write-Output "Found VC Redist ARM64 at: $arm64Path"
+            foreach ($dll in @("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+              $src = Get-ChildItem -Path $arm64Path -Filter $dll -Recurse | Select-Object -First 1
+              if ($src) {
+                Copy-Item $src.FullName build/windows/arm64/runner/Release/
+                Write-Output "Copied $($src.FullName)"
+              } else {
+                Write-Output "WARNING: $dll not found in $arm64Path"
+              }
+            }
+          } else {
+            Write-Output "WARNING: VC Redist ARM64 directory not found, skipping DLL copy"
+          }
+
+      - name: List output files
+        working-directory: app
+        run: Get-ChildItem build/windows/arm64/runner/Release/
+
+      - name: Zip compiled files
+        working-directory: app
+        run: Compress-Archive -Path build/windows/arm64/runner/Release/* -DestinationPath LocalSend-ARM64.zip
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-zip-arm64-result
+          path: app/LocalSend-ARM64.zip
