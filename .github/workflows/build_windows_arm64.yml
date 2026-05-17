@@ -47,6 +47,39 @@ jobs:
         working-directory: app/rust_builder/cargokit/build_tool
         run: flutter pub get
 
+      - name: Patch cargokit for Windows ARM64
+        shell: pwsh
+        run: |
+          # rhttp's bundled cargokit lacks windows-arm64 target mapping.
+          # Patch all cargokit target.dart files in the pub cache to add it.
+          $pubCache = "$env:LOCALAPPDATA\Pub\Cache"
+          if (-not (Test-Path $pubCache)) {
+            $pubCache = "$env:USERPROFILE\.pub-cache"
+          }
+          $targetFiles = Get-ChildItem -Path $pubCache -Recurse -Filter "target.dart" |
+            Where-Object { $_.FullName -match "cargokit" }
+          foreach ($file in $targetFiles) {
+            $content = Get-Content $file.FullName -Raw
+            if ($content -match "windows-arm64") {
+              Write-Output "Already has windows-arm64: $($file.FullName)"
+              continue
+            }
+            $arm64Entry = @"
+                Target(
+                  rust: 'aarch64-pc-windows-msvc',
+                  flutter: 'windows-arm64',
+                ),
+          "@
+            $pattern = "(Target\(\s*rust:\s*'x86_64-pc-windows-msvc',\s*flutter:\s*'windows-x64',\s*\),)"
+            if ($content -match $pattern) {
+              $content = $content -replace $pattern, "`$1`n$arm64Entry"
+              Set-Content -Path $file.FullName -Value $content -NoNewline
+              Write-Output "Patched: $($file.FullName)"
+            } else {
+              Write-Output "WARNING: Could not find windows-x64 target pattern in $($file.FullName)"
+            }
+          }
+
       - name: Generate Flutter configuration
         working-directory: app
         run: flutter build windows --config-only
